@@ -9,9 +9,7 @@ steps:
     '.'
   ]
 
-# --- CRITICAL FIX: Explicitly push the image to Artifact Registry ---
 # Step 2: Push the locally tagged image to the remote Artifact Registry.
-# This ensures the image is available before the deployment step tries to pull it.
 - name: 'gcr.io/cloud-builders/docker'
   id: Push-Image
   args: [
@@ -26,17 +24,18 @@ steps:
     'run',
     'deploy',
     '${_SERVICE_NAME}',
-    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Reference the now-pushed image from AR
+    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}',
     '--region', '${_REGION}',
     '--platform', 'managed',
     '--allow-unauthenticated',
+    # --- FIX: Increase memory to 1 GiB (1024 MiB) ---
+    '--memory', '1Gi',
     '--set-env-vars',
     # Environment variables for your application
     'PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},CSV_FILE_NAME=${_CSV_FILE_NAME},EMBEDDINGS_FILE_NAME=processed/embeddings.json,REGION=${_REGION}'
   ]
 
 images:
-# The images section is now optional since the push is handled explicitly in Step 2.
 - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}'
 options:
   # This option prevents the deployment from failing due to IAM policy errors 
