@@ -11,7 +11,7 @@ steps:
 
 # Step 2: Deploy the image to Cloud Run.
 # The --image flag is updated to reference the new Artifact Registry path.
-- name: '{_REGION}-docker.pkg.dev/cloud-sdk/google/cloud-sdk'
+- name: '${_REGION}-docker.pkg.dev/cloud-sdk/google/cloud-sdk'
   args: [
     'run',
     'deploy',
