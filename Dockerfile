@@ -1,24 +1,22 @@
-# Use a lightweight Python base image
+# Use the full Python image, which includes necessary build tools (like gcc) 
+# to compile packages like scikit-learn from requirements.txt.
 FROM python:3.11
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file first to leverage Docker's layer caching
-# This means dependencies are only reinstalled if requirements.txt changes
+# Copy the requirements file into the container
 COPY requirements.txt .
 
-# Install the required Python packages
+# Install dependencies using pip
+# We use --no-cache-dir to keep the image size small
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
 
-# Expose the port that the app will listen on (required by Cloud Run)
-EXPOSE 8080
+# Cloud Run expects the application to listen on the port defined by the PORT environment variable.
+ENV PORT 8080
 
-# Run the application using Gunicorn, a production-ready WSGI server
-# The Gunicorn command starts the app on port 8080 and sets the number of workers.
-# The --timeout 600 flag increases the timeout to 10 minutes to allow
-# for the initial data and embeddings loading on cold starts.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "600", "app:app"]
+# Command to run the application using gunicorn (assuming your main app is in app.py)
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 120 app:app
