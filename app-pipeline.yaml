@@ -1,22 +1,22 @@
 steps:
 # Step 1: Build the Docker image and tag it for Artifact Registry (AR).
-# REVERTED: Using the highly stable legacy GCR Docker builder path to avoid AR pull failures.
+# Status: Use the stable, global GCR path for the Docker builder.
 - name: 'gcr.io/cloud-builders/docker'
   args: [
     'build', 
     '-t', 
-    '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Application image path using AR (CORRECT)
+    '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Application image path using AR
     '.'
   ]
 
 # Step 2: Deploy the image to Cloud Run.
-# REVERTED: Using the highly stable legacy GCR gcloud builder path to resolve the "denied" pull errors.
+# Status: Use the stable, global GCR path for the GCloud SDK builder.
 - name: 'gcr.io/cloud-builders/gcloud'
   args: [
     'run',
     'deploy',
     '${_SERVICE_NAME}',
-    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Using the application image from AR (CORRECT)
+    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Reference the application image from AR
     '--region', '${_REGION}',
     '--platform', 'managed',
     '--allow-unauthenticated',
