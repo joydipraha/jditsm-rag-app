@@ -1,23 +1,22 @@
 steps:
 # Step 1: Build the Docker image and tag it for Artifact Registry (AR).
-# FIX: Using 'us-docker.pkg.dev' (multi-regional) for the Docker builder image for maximum stability.
-- name: 'us-docker.pkg.dev/cloud-builders/docker'
+# REVERTED: Using the highly stable legacy GCR Docker builder path to avoid AR pull failures.
+- name: 'gcr.io/cloud-builders/docker'
   args: [
     'build', 
     '-t', 
-    '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Application image path using AR
+    '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Application image path using AR (CORRECT)
     '.'
   ]
 
 # Step 2: Deploy the image to Cloud Run.
-# CRITICAL FIX: The Cloud SDK builder image is switched from the failing regional path
-# to the stable, multi-regional path ('us-docker.pkg.dev') to resolve the "denied" errors.
-- name: 'us-docker.pkg.dev/cloud-sdk/google/cloud-sdk'
+# REVERTED: Using the highly stable legacy GCR gcloud builder path to resolve the "denied" pull errors.
+- name: 'gcr.io/cloud-builders/gcloud'
   args: [
     'run',
     'deploy',
     '${_SERVICE_NAME}',
-    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Using the application image from AR
+    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Using the application image from AR (CORRECT)
     '--region', '${_REGION}',
     '--platform', 'managed',
     '--allow-unauthenticated',
