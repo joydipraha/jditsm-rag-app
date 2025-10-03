@@ -29,7 +29,7 @@ steps:
     '--platform', 'managed',
     '--allow-unauthenticated',
     # --- FIX: Increase memory to 1 GiB (1024 MiB) ---
-    '--memory', '2Gi',
+    '--memory', '4Gi',
     '--set-env-vars',
     # Environment variables for your application
     'PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},CSV_FILE_NAME=${_CSV_FILE_NAME},EMBEDDINGS_FILE_NAME=processed/embeddings.json,REGION=${_REGION}'

@@ -3,7 +3,7 @@ import os
 import json
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
-from vertexai.generative_models import GenerativeModel
+from vertexai.generative_models import GenerativeModel, Content
 import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
 import logging
@@ -34,200 +34,156 @@ EMBEDDINGS_DATA = None
 # Initialize Vertex AI clients.
 try:
     vertexai.init(project=PROJECT_ID, location=REGION)
+    # FIX: Initialize GenerativeModel directly.
     llm = GenerativeModel(LLM_MODEL)
     embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-004")
 except Exception as e:
-    logging.error(f"Vertex AI initialization failed: {e}")
+    logging.error(f"Failed to initialize Vertex AI services: {e}")
+    # This exception handling is important for Cloud Run startup failures.
 
-# --- Helper Functions ---
-
-def download_gcs_file(bucket_name, source_blob_name, destination_file_name):
-    """Downloads a blob from the bucket."""
+def load_data_from_gcs():
+    """Downloads incident data (CSV) and embeddings (JSON) from GCS."""
+    global INCIDENT_DATA, EMBEDDINGS_DATA
+    
+    # 1. Download CSV data
     try:
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(source_blob_name)
-        logging.info(f"Downloading {source_blob_name} to {destination_file_name}...")
-        blob.download_to_filename(destination_file_name)
-        logging.info(f"Download complete: {destination_file_name}")
-        return True
+        bucket = storage_client.bucket(GCS_BUCKET_NAME)
+        blob = bucket.blob(CSV_FILE_NAME)
+        
+        # Use a temporary file to download the CSV
+        with tempfile.NamedTemporaryFile(mode='w+', delete=True) as temp_csv:
+            blob.download_to_filename(temp_csv.name)
+            temp_csv.seek(0)
+            INCIDENT_DATA = pd.read_csv(temp_csv.name)
+        logging.info(f"Successfully loaded {len(INCIDENT_DATA)} incident records.")
     except Exception as e:
-        logging.error(f"Failed to download {source_blob_name}: {e}")
+        logging.error(f"Error loading CSV data from GCS: {e}")
         return False
 
-def load_data(csv_path, embeddings_path):
-    """Loads CSV into DataFrame and JSON into NumPy array."""
-    global INCIDENT_DATA
-    global EMBEDDINGS_DATA
-    
+    # 2. Download embeddings data
     try:
-        # Load the CSV data
-        INCIDENT_DATA = pd.read_csv(csv_path)
-        logging.info(f"Loaded CSV data: {len(INCIDENT_DATA)} rows.")
-        
-        # Load the embeddings
-        with open(embeddings_path, 'r') as f:
-            embeddings_list = json.load(f)
-            
-        # Convert list of embeddings (list of lists) into a NumPy array
-        EMBEDDINGS_DATA = np.array(embeddings_list)
-        logging.info(f"Loaded embeddings data: {EMBEDDINGS_DATA.shape}")
-        
+        blob = bucket.blob(EMBEDDINGS_FILE_NAME)
+        embeddings_json = blob.download_as_text()
+        EMBEDDINGS_DATA = json.loads(embeddings_json)
+        logging.info(f"Successfully loaded {len(EMBEDDINGS_DATA)} embeddings.")
     except Exception as e:
-        logging.error(f"Failed to load local data files: {e}")
-        INCIDENT_DATA = None
-        EMBEDDINGS_DATA = None
+        logging.error(f"Error loading embeddings JSON from GCS: {e}")
+        return False
+        
+    return True
 
-# --- Initialization Function (Lazy Loading) ---
 def initialize_global_resources():
-    """
-    Downloads and loads the required data files if they are not already loaded.
-    This function uses a flag check for warm starts.
-    """
-    global INCIDENT_DATA
-    global EMBEDDINGS_DATA
+    """Initializes global data structures if they haven't been loaded."""
+    global INCIDENT_DATA, EMBEDDINGS_DATA
     
-    # Check if data is already loaded (for warm start)
-    if INCIDENT_DATA is not None and EMBEDDINGS_DATA is not None:
-        logging.info("Global resources already loaded. Skipping initialization.")
-        return True
-    
-    logging.info("Starting initial resource loading (cold start)...")
+    if INCIDENT_DATA is None or EMBEDDINGS_DATA is None:
+        return load_data_from_gcs()
+    return True
 
-    # Use tempfile to ensure cleanup in /tmp directory
-    with tempfile.TemporaryDirectory() as temp_dir:
-        csv_local_path = os.path.join(temp_dir, CSV_FILE_NAME)
-        embeddings_local_path = os.path.join(temp_dir, os.path.basename(EMBEDDINGS_FILE_NAME))
+# --- Embedding and Retrieval Logic ---
 
-        # 1. Download CSV
-        if not download_gcs_file(GCS_BUCKET_NAME, CSV_FILE_NAME, csv_local_path):
-            logging.error("Initialization failed: Could not download CSV.")
-            return False
-
-        # 2. Download Embeddings
-        if not download_gcs_file(GCS_BUCKET_NAME, EMBEDDINGS_FILE_NAME, embeddings_local_path):
-            logging.error("Initialization failed: Could not download embeddings.")
-            return False
-
-        # 3. Load Data
-        load_data(csv_local_path, embeddings_local_path)
-
-    return INCIDENT_DATA is not None and EMBEDDINGS_DATA is not None
-
-def get_query_embedding(query_text):
-    """Generates the embedding for the user query."""
+def get_query_embedding(query: str):
+    """Generates the embedding for the user's query."""
     try:
-        response = embedding_model.embed_texts(
-            texts=[query_text],
-            task_type="RETRIEVAL_QUERY",
-            output_dimensionality=768 # Match the model output dimension
-        )
-        return response[0].values
+        embedding = embedding_model.get_embeddings([query])
+        # Return only the vector list
+        return embedding[0].values
     except Exception as e:
-        logging.error(f"Failed to generate query embedding: {e}")
+        logging.error(f"Embedding generation failed: {e}")
         return None
 
-def retrieve_incidents_in_memory(query_embedding_values, k=3):
-    """
-    Performs vector similarity search against the pre-loaded embeddings
-    and constructs a detailed context string from all relevant columns,
-    excluding the noisy 'DESCRIPTION'.
-    """
-    if EMBEDDINGS_DATA is None or INCIDENT_DATA is None:
-        logging.error("Data not loaded for retrieval.")
+def retrieve_incidents_in_memory(query_embedding: list, top_k: int = 5):
+    """Performs cosine similarity search against all stored embeddings."""
+    if EMBEDDINGS_DATA is None:
+        logging.error("Embeddings data is not loaded.")
         return []
 
-    # Reshape the query embedding to be a 2D array for cosine_similarity
-    query_vector = np.array(query_embedding_values).reshape(1, -1)
+    # Convert embeddings list of lists to a numpy array for efficient computation
+    document_embeddings = np.array([item['embedding'] for item in EMBEDDINGS_DATA])
     
-    # Calculate cosine similarity between the query vector and all incident vectors
-    similarities = cosine_similarity(query_vector, EMBEDDINGS_DATA)[0]
+    # Compute similarity between the query and all document embeddings
+    # Reshape query_embedding to be a 2D array (1, n_features) for similarity calculation
+    query_vector = np.array(query_embedding).reshape(1, -1)
     
-    # Get the indices of the top K most similar incidents
-    top_k_indices = np.argsort(similarities)[::-1][:k]
+    # Cosine similarity returns a 1D array of scores
+    similarity_scores = cosine_similarity(query_vector, document_embeddings)[0]
     
-    # Retrieve the corresponding incident text/data
-    retrieved_incidents = INCIDENT_DATA.iloc[top_k_indices]
+    # Get the indices of the top_k scores (most relevant)
+    top_indices = np.argsort(similarity_scores)[::-1][:top_k]
     
-    # CRITICAL FIX: Define only the valuable, structured columns for the LLM context.
-    # The 'DESCRIPTION' field is explicitly excluded here.
-    RAG_CONTEXT_COLUMNS = [
-        'Incident ID', 
-        'Reporter Name', 
-        'Contact Type', 
-        'Category', 
-        'Item Affected (CI)', 
-        'Short Description', 
-        'Priority', 
-        'Status', 
-        'Assignment Group', 
-        'SLA Breached', 
-        'Root Cause', 
+    retrieved_incidents = []
+    
+    # Define the required columns for the RAG context
+    REQUIRED_COLUMNS = [
+        'Incident ID', 'Reporter Name', 'Contact Type', 'Category', 
+        'Item Affected (CI)', 'Short Description', 'Priority', 'Status', 
+        'Assignment Group', 'SLA Breached', 'Root Cause'
     ]
-
-    # Create detailed context string for the LLM
-    context = ""
-    for index, row in retrieved_incidents.iterrows():
-        # Start a structured block for each incident
-        incident_context = f"--- INCIDENT RECORD START (Index: {index}) ---\n"
+    
+    for idx in top_indices:
+        # Get the row from the incident data
+        incident_row = INCIDENT_DATA.iloc[idx]
         
-        for col in RAG_CONTEXT_COLUMNS:
-            # Check if the column exists in the DataFrame (safe check)
-            if col in row.index:
-                # Format the column name and its value. Uppercasing and replacing spaces for LLM clarity.
-                field_name = col.upper().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
-                # Ensure missing values are represented clearly, although this should be cleaned upstream.
-                value = row[col] if pd.notna(row[col]) else "N/A" 
-                incident_context += f"{field_name}: {value}\n"
-            
-        incident_context += f"--- INCIDENT RECORD END ---\n\n"
-        context += incident_context
-    
-    return context
+        # Construct a readable context string using the required columns
+        context_parts = []
+        for col in REQUIRED_COLUMNS:
+            # Check if the column exists to prevent key errors if data schema changed
+            if col in incident_row:
+                context_parts.append(f"{col}: {incident_row[col]}")
+            else:
+                logging.warning(f"Column '{col}' not found in incident data.")
 
-def generate_rag_answer(user_query, context):
-    """
-    Generates a final answer using the LLM based on the user query and retrieved context.
-    """
-    system_instruction = (
-        "You are an ITSM Executive Assistant. Your task is to analyze the provided "
-        "incident data (CONTEXT) which contains structured fields like Incident ID, Reporter Name, Category, "
-        "Short Description, Priority, Status, and Root Cause. "
-        "Answer the USER_QUERY concisely and professionally using ONLY the facts found in the CONTEXT. "
-        "The original full 'DESCRIPTION' text was omitted due to containing demo data, so rely on the other structured fields."
-        "If the CONTEXT does not contain sufficient information to answer the query, "
-        "you MUST state that you 'cannot answer the question based on the provided incident data' and stop."
-        "Do not invent information."
-    )
+        context = ", ".join(context_parts)
+        retrieved_incidents.append(context)
+        
+    return retrieved_incidents
+
+# --- LLM Generation ---
+
+def generate_rag_answer(query: str, context: list) -> str:
+    """Generates a final answer using the LLM based on retrieved context."""
+    if not context:
+        return f"Based on the available incident data, I cannot answer the query: '{query}'."
+
+    context_str = "\n---\n".join(context)
     
-    prompt = (
-        f"USER_QUERY: {user_query}\n\n"
-        f"CONTEXT (Incident Data):\n---\n{context}\n---"
-    )
+    prompt = f"""
+    You are an expert IT Service Management (ITSM) analyst. Your goal is to answer a user's question based ONLY on the provided relevant incident records below.
+
+    Context/Incident Records:
+    ---
+    {context_str}
+    ---
+
+    User Query: "{query}"
+
+    Instructions:
+    1. Base your answer strictly on the provided Context/Incident Records.
+    2. If the context does not contain sufficient information to answer the query, state clearly: "Based on the available incident data, I cannot answer this query."
+    3. Be concise and focus on combining the information from the incidents to give a useful summary.
+    """
     
     try:
+        # Use the globally defined llm instance
         response = llm.generate_content(
-            contents=[prompt],
-            config={"system_instruction": system_instruction}
+            contents=prompt
         )
         return response.text
     except Exception as e:
-        logging.error(f"LLM generation failed: {e}")
-        return "Sorry, the AI model failed to generate an answer."
+        logging.error(f"Gemini API call failed: {e}")
+        return f"An error occurred while generating the answer: {e}"
 
-# --- Main Flask Routes ---
+# --- Flask Routes ---
 
 @app.route('/')
-def index():
-    """Serves the main HTML page."""
-    return send_from_directory('.', 'index.html')
+def home():
+    """A simple homepage for health checks and status."""
+    return "ITSM RAG Service is running. Use the /query endpoint to submit questions."
 
-@app.route('/rag', methods=['POST'])
-def rag_endpoint():
-    """
-    Handles the RAG search request, ensuring resources are loaded on first call.
-    """
-    # Ensure resources are loaded. This is called on every request, 
-    # but the function itself handles the 'already loaded' case for warm starts.
+@app.route('/query', methods=['POST'])
+def query():
+    """The main RAG endpoint."""
+    
     if not initialize_global_resources():
         return jsonify({"error": "Service initialization failed. Could not load required data."}), 500
         
@@ -259,4 +215,6 @@ def rag_endpoint():
 
 # --- Main Entry Point ---
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    # Initialize data immediately for local testing, otherwise Cloud Run handles it on first request
+    initialize_global_resources()
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
