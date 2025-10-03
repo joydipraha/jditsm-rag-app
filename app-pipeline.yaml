@@ -28,6 +28,7 @@ steps:
     '--region', '${_REGION}',
     '--platform', 'managed',
     '--allow-unauthenticated',
+    '--cpu', '2',
     # --- FIX: Increase memory to 8 GiB (1024 MiB)
     '--memory', '8Gi',
     '--set-env-vars',
