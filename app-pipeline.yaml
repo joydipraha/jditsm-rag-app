@@ -28,7 +28,7 @@ steps:
     '--region', '${_REGION}',
     '--platform', 'managed',
     '--allow-unauthenticated',
-    # --- FIX: Increase memory to 1 GiB (1024 MiB) ---
+    # --- FIX: Increase memory to 4 GiB (1024 MiB)
     '--memory', '4Gi',
     '--set-env-vars',
     # Environment variables for your application
