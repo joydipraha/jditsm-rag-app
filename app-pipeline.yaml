@@ -1,7 +1,7 @@
 steps:
 # Step 1: Build the Docker image and tag it for Artifact Registry.
 # The tag now uses the Artifact Registry path.
-- name: '${_REGION}-docker.pkg.dev/cloud-builders/docker'
+- name: 'gcr.io/cloud-builders/docker'
   args: [
     'build', 
     '-t', 
