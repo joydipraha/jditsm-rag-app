@@ -29,3 +29,7 @@ steps:
 images:
 # The image built in the first step is pushed to Artifact Registry (AR).
 - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}'
+options:
+  # This option prevents the deployment from failing due to IAM policy errors 
+  # when using a custom service account for the deployment (Cloud Build SA).
+  logging: CLOUD_LOGGING_ONLY
