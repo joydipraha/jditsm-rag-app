@@ -24,3 +24,9 @@ steps:
 images:
 # The image built in the first step is pushed to Container Registry.
 - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}'
+
+# --- NEW REQUIRED SECTION FOR LOGGING ---
+# This ensures logs are written to Cloud Logging instead of attempting to use
+# the default GCS bucket setup, resolving the 'invalid argument' error.
+options:
+  logging: CLOUD_LOGGING_ONLY
