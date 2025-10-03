@@ -5,10 +5,9 @@ steps:
   args: ['build', '-t', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}', '.']
 
 # Step 2: Deploy the image to Cloud Run.
-# We use the Cloud SDK to deploy the image. The `--image` flag points to the image we just built.
-# The `--region` flag is crucial for telling Cloud Run where to deploy.
-# We also set the environment variables that your Python script needs to run.
-- name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
+# We have updated the builder name from the deprecated 'gcr.io/google.com/cloudsdk/cloud-sdk' 
+# to the stable 'gcr.io/cloud-builders/gcloud' to resolve the pull error.
+- name: 'gcr.io/cloud-builders/gcloud'
   args: [
     'run',
     'deploy',
@@ -24,9 +23,3 @@ steps:
 images:
 # The image built in the first step is pushed to Container Registry.
 - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}'
-
-# --- NEW REQUIRED SECTION FOR LOGGING ---
-# This ensures logs are written to Cloud Logging instead of attempting to use
-# the default GCS bucket setup, resolving the 'invalid argument' error.
-options:
-  logging: CLOUD_LOGGING_ONLY
