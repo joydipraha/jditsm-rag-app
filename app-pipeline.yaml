@@ -1,34 +1,31 @@
 steps:
-# Step 1: Build the Docker image and tag it for Artifact Registry.
-# The tag now uses the Artifact Registry path.
-- name: 'gcr.io/cloud-builders/docker'
+# Step 1: Build the Docker image and tag it for Artifact Registry (AR).
+# FIX: Using 'us-docker.pkg.dev' (multi-regional) for the Docker builder image for maximum stability.
+- name: 'us-docker.pkg.dev/cloud-builders/docker'
   args: [
     'build', 
     '-t', 
-    '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', 
+    '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Application image path using AR
     '.'
   ]
 
 # Step 2: Deploy the image to Cloud Run.
-# The --image flag is updated to reference the new Artifact Registry path.
-- name: '${_REGION}-docker.pkg.dev/cloud-sdk/google/cloud-sdk'
+# CRITICAL FIX: The Cloud SDK builder image is switched from the failing regional path
+# to the stable, multi-regional path ('us-docker.pkg.dev') to resolve the "denied" errors.
+- name: 'us-docker.pkg.dev/cloud-sdk/google/cloud-sdk'
   args: [
     'run',
     'deploy',
     '${_SERVICE_NAME}',
-    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}',
+    '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}', # Using the application image from AR
     '--region', '${_REGION}',
     '--platform', 'managed',
     '--allow-unauthenticated',
     '--set-env-vars',
+    # Environment variables for your application
     'PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},CSV_FILE_NAME=${_CSV_FILE_NAME},EMBEDDINGS_FILE_NAME=processed/embeddings.json,REGION=${_REGION}'
   ]
 
 images:
-# The image is pushed to Artifact Registry after the build.
+# The image built in the first step is pushed to Artifact Registry (AR).
 - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO_NAME}/${_SERVICE_NAME}'
-
-options:
-  # This option prevents the deployment from failing due to IAM policy errors 
-  # when using a custom service account for the deployment (Cloud Build SA).
-  logging: CLOUD_LOGGING_ONLY
