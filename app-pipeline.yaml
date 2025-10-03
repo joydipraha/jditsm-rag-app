@@ -1,0 +1,26 @@
+steps:
+# Step 1: Build the Docker image.
+# We build the image using the Dockerfile in the current directory (`.`) and tag it with the project ID.
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}', '.']
+
+# Step 2: Deploy the image to Cloud Run.
+# We use the Cloud SDK to deploy the image. The `--image` flag points to the image we just built.
+# The `--region` flag is crucial for telling Cloud Run where to deploy.
+# We also set the environment variables that your Python script needs to run.
+- name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
+  args: [
+    'run',
+    'deploy',
+    '${_SERVICE_NAME}',
+    '--image', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}',
+    '--region', '${_REGION}',
+    '--platform', 'managed',
+    '--allow-unauthenticated',
+    '--set-env-vars',
+    'PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},CSV_FILE_NAME=${_CSV_FILE_NAME},EMBEDDINGS_FILE_NAME=processed/embeddings.json,REGION=${_REGION}'
+  ]
+
+images:
+# The image built in the first step is pushed to Container Registry.
+- 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}'

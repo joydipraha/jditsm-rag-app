@@ -1,0 +1,7 @@
+pandas
+flask
+google-cloud-storage
+google-cloud-aiplatform>=1.38.0
+vertexai
+gunicorn
+scikit-learn
