@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 # Read values from environment variables.
 PROJECT_ID = os.environ.get("PROJECT_ID")
 REGION = os.environ.get("REGION")
+# Using the stable, supported model name.
 LLM_MODEL = "gemini-2.5-flash"
 EMBEDDING_MODEL_NAME = "text-embedding-004"
 
@@ -73,11 +74,12 @@ def get_query_embedding(text: str) -> np.ndarray:
         logging.error(f"Error generating embedding: {e}")
         return None
 
-def retrieve_incidents_in_memory(query_embedding: np.ndarray, top_k: int = 5):
+def retrieve_incidents_in_memory(query_embedding: np.ndarray, top_k: int = 3):
     """
     Performs a vector similarity search and retrieves all 11 required fields for RAG context.
     
-    The default top_k is 5.
+    The column names used for lookup (e.g., "incident id") MUST match the lowercased 
+    headers of the CSV file.
     """
     global EMBEDDINGS_DATA, INCIDENT_DATA
 
@@ -98,20 +100,23 @@ def retrieve_incidents_in_memory(query_embedding: np.ndarray, top_k: int = 5):
     # 4. Retrieve the actual incident data and format
     retrieved_incidents = []
     
-    # Map the desired descriptive field name to the column name in the DataFrame
+    # --- FIX: Updated FIELD_MAPPING based on user's column headers (all lowercased) ---
     FIELD_MAPPING = {
-        "Incident ID": "number",
-        "Reporter Name": "caller_id",
-        "Contact Type": "contact_type",
+        "Incident ID": "incident id", 
+        "Reporter Name": "reporter name",
+        "Contact Type": "contact type",
         "Category": "category",
-        "Item Affected (CI)": "cmdb_ci",
-        "Short Description": "short_description",
+        # CI is "Item Affected (CI)" which becomes "item affected (ci)"
+        "Item Affected (CI)": "item affected (ci)", 
+        "Short Description": "short description",
         "Priority": "priority",
-        "Status": "incident_state", 
-        "Assignment Group": "assignment_group",
-        "SLA Breached": "sla_due", 
-        "Root Cause": "root_cause",
+        "Status": "status", 
+        "Assignment Group": "assignment group",
+        # SLA Breached is "SLA Breached" which becomes "sla breached"
+        "SLA Breached": "sla breached", 
+        "Root Cause": "root cause",
     }
+    # ---------------------------------------------------------------------------------
     
     for idx in top_k_indices:
         incident_row = INCIDENT_DATA.iloc[idx].to_dict()
@@ -162,7 +167,6 @@ def generate_rag_answer(user_query, retrieved_incidents):
     """
 
     try:
-        # Fix: The keyword 'config' was replaced with 'generation_config'
         response = llm.generate_content(
             prompt,
             generation_config={"temperature": 0.2}
@@ -216,9 +220,13 @@ def initialize_global_resources():
                 logging.error("Failed to load incident CSV data from GCS.")
                 return False
             
-            # Read CSV and ensure we handle potential missing columns gracefully if data structure changes
             INCIDENT_DATA = pd.read_csv('incident_data.csv')
+            
+            # ** FIX: Normalize column names to lowercase to prevent case-sensitivity issues **
+            INCIDENT_DATA.columns = INCIDENT_DATA.columns.str.lower()
+            
             logging.info(f"Loaded {len(INCIDENT_DATA)} incident records.")
+            logging.info(f"Available columns (now lowercase): {list(INCIDENT_DATA.columns)}")
         except Exception as e:
             logging.error(f"FATAL: Error processing incident CSV data (read_csv failure): {e}")
             return False
@@ -268,8 +276,8 @@ def rag():
             return jsonify({"error": "Failed to generate query embedding."}), 500
             
         # Retrieve context
-        # top_k remains 5 as per user request
-        retrieved_incidents = retrieve_incidents_in_memory(query_embedding_values, top_k=5)
+        # top_k=3 to ensure request size remains small enough for the LLM API limit.
+        retrieved_incidents = retrieve_incidents_in_memory(query_embedding_values, top_k=3)
         
         # Generate RAG answer
         rag_answer = generate_rag_answer(user_query, retrieved_incidents)
