@@ -39,6 +39,10 @@ initialization_lock = threading.Lock() # Lock for thread-safe initialization
 
 # Initialize Vertex AI clients.
 try:
+    # Ensure all required variables are present before initialization
+    if not all([PROJECT_ID, REGION]):
+        raise ValueError("PROJECT_ID or REGION environment variables are missing.")
+        
     vertexai.init(project=PROJECT_ID, location=REGION)
     llm = GenerativeModel(LLM_MODEL)
     embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
@@ -78,22 +82,37 @@ def load_data_from_gcs():
         df = pd.read_csv(csv_path)
         
         # --- Mandatory: Convert all context columns to string for RAG purposes ---
-        # Ensure all columns needed for RAG context are treated as strings
-        columns_to_convert = [
-            'document_id', 'reporter_name', 'contact_type', 'category', 
-            'item_affected', 'short_description', 'description', 
-            'priority', 'status', 'assignment_group', 'sla_breached', 'root_cause'
-        ]
+        # The columns required for metadata definition/indexing are:
+        # Incident ID (used as index), Reporter Name, Contact Type, Category, 
+        # Item Affected (CI), Short Description, Priority, Status, 
+        # Assignment Group, SLA Breached, Root Cause.
         
-        for col in columns_to_convert:
-            if col in df.columns:
-                df[col] = df[col].astype(str).fillna('')
+        # Mapping from (likely) CSV column names to internal dictionary names
+        column_map = {
+            'document_id': 'Incident ID',
+            'reporter_name': 'Reporter Name',
+            'contact_type': 'Contact Type',
+            'category': 'Category',
+            'item_affected': 'Item Affected (CI)',
+            'short_description': 'Short Description',
+            'description': 'Full Description',
+            'priority': 'Priority',
+            'status': 'Status',
+            'assignment_group': 'Assignment Group',
+            'sla_breached': 'SLA Breached',
+            'root_cause': 'Root Cause'
+        }
+
+        # Rename columns for consistency and ensure they exist as strings
+        for csv_col, target_col in column_map.items():
+            if csv_col in df.columns:
+                df[target_col] = df[csv_col].astype(str).fillna('')
             else:
-                logging.warning(f"Column '{col}' not found in CSV data. Using empty string.")
-                df[col] = '' # Add empty column if missing
+                logging.warning(f"Column '{csv_col}' not found in CSV data. Creating empty column '{target_col}'.")
+                df[target_col] = ''
         
-        # Set 'document_id' as index for fast lookups
-        INCIDENT_DATA = df.rename(columns={'document_id': 'Incident ID'}).set_index('Incident ID')
+        # Set 'Incident ID' as index for fast lookups
+        INCIDENT_DATA = df.set_index('Incident ID')
         
         logging.info(f"Loaded {len(INCIDENT_DATA)} incident records with enhanced metadata.")
         os.remove(csv_path) # Clean up temp file
@@ -157,7 +176,6 @@ def get_query_embedding(query_text):
         
         response = embedding_model.get_embeddings([query_text])
         # The result is a list of embeddings; we take the first one (as the input was a single query)
-        # and convert it to a NumPy array for compatibility with EMBEDDINGS_DATA
         return np.array(response[0].values)
     except Exception as e:
         logging.error(f"Error generating query embedding: {e}")
@@ -197,23 +215,23 @@ def retrieve_incidents_in_memory(query_embedding_values, top_k=5):
             context_string = (
                 f"Incident ID: {doc_id}\n"
                 f"Similarity Score: {similarity_score:.4f}\n"
-                f"Reporter Name: {incident['reporter_name']}\n"
-                f"Contact Type: {incident['contact_type']}\n"
-                f"Category: {incident['category']}\n"
-                f"Item Affected (CI): {incident['item_affected']}\n"
-                f"Priority: {incident['priority']}\n"
-                f"Status: {incident['status']}\n"
-                f"Assignment Group: {incident['assignment_group']}\n"
-                f"SLA Breached: {incident['sla_breached']}\n"
-                f"Root Cause: {incident['root_cause']}\n"
-                f"Short Description: {incident['short_description']}\n"
-                f"Full Description: {incident['description']}\n" # Assuming 'description' is the full text
+                f"Reporter Name: {incident['Reporter Name']}\n"
+                f"Contact Type: {incident['Contact Type']}\n"
+                f"Category: {incident['Category']}\n"
+                f"Item Affected (CI): {incident['Item Affected (CI)']}\n"
+                f"Priority: {incident['Priority']}\n"
+                f"Status: {incident['Status']}\n"
+                f"Assignment Group: {incident['Assignment Group']}\n"
+                f"SLA Breached: {incident['SLA Breached']}\n"
+                f"Root Cause: {incident['Root Cause']}\n"
+                f"Short Description: {incident['Short Description']}\n"
+                f"Full Description: {incident['Full Description']}\n"
             )
             
             # Also prepare a simplified dictionary for the frontend to display context
             context_dict = {
                 "incident_id": doc_id,
-                "short_description": incident['short_description'],
+                "short_description": incident['Short Description'],
                 "context_string": context_string
             }
             retrieved_incidents.append(context_dict)
@@ -265,14 +283,13 @@ def generate_rag_answer(user_query, retrieved_incidents):
 
 # --- Flask Routes ---
 
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_index(path):
+# 1. Root route: Only allows GET to serve the HTML file
+@app.route('/', methods=['GET'])
+def serve_index():
     """Serves the index.html file for the root path."""
-    if path == "":
-        return send_from_directory('.', 'index.html')
     return send_from_directory('.', 'index.html')
 
+# 2. API route: Only allows POST to execute RAG
 @app.route('/rag', methods=['POST'])
 def rag_endpoint():
     """Handles the RAG query requests."""
@@ -306,8 +323,7 @@ def rag_endpoint():
         # 5. Return the answer and the context for display
         return jsonify({
             "answer": rag_answer,
-            # Send context to the frontend: only the dictionary elements are needed, 
-            # as the full context string is only for the LLM.
+            # Send context to the frontend: only the dictionary elements are needed
             "context": [{"incident_id": item['incident_id'], "short_description": item['short_description']} for item in retrieved_incidents] 
         })
         
