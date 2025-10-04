@@ -77,8 +77,7 @@ def retrieve_incidents_in_memory(query_embedding: np.ndarray, top_k: int = 5):
     """
     Performs a vector similarity search and retrieves all 11 required fields for RAG context.
     
-    Fields retrieved: 'number', 'caller_id', 'contact_type', 'category', 'cmdb_ci', 
-    'short_description', 'priority', 'incident_state', 'assignment_group', 'sla_due', 'root_cause'
+    The default top_k is 5.
     """
     global EMBEDDINGS_DATA, INCIDENT_DATA
 
@@ -98,12 +97,6 @@ def retrieve_incidents_in_memory(query_embedding: np.ndarray, top_k: int = 5):
 
     # 4. Retrieve the actual incident data and format
     retrieved_incidents = []
-    # All 11 columns requested, using typical ITSM field names
-    CONTEXT_COLUMNS = [
-        'number', 'caller_id', 'contact_type', 'category', 'cmdb_ci', 
-        'short_description', 'priority', 'incident_state', 'assignment_group', 
-        'sla_due', 'root_cause'
-    ]
     
     # Map the desired descriptive field name to the column name in the DataFrame
     FIELD_MAPPING = {
@@ -114,9 +107,9 @@ def retrieve_incidents_in_memory(query_embedding: np.ndarray, top_k: int = 5):
         "Item Affected (CI)": "cmdb_ci",
         "Short Description": "short_description",
         "Priority": "priority",
-        "Status": "incident_state", # Typically 'incident_state' in ServiceNow data
+        "Status": "incident_state", 
         "Assignment Group": "assignment_group",
-        "SLA Breached": "sla_due", # Typically 'sla_due' or similar
+        "SLA Breached": "sla_due", 
         "Root Cause": "root_cause",
     }
     
@@ -155,7 +148,7 @@ def generate_rag_answer(user_query, retrieved_incidents):
     prompt = f"""
     You are an expert ITSM (IT Service Management) Executive Assistant. Your goal is to answer a user's question concisely based ONLY on the provided relevant incident context. You can synthesize information across multiple incidents if necessary.
 
-    The context contains the following key fields for each incident: Incident ID, Reporter Name, Contact Type, Category, Item Affected (CI), Short Description, Priority, Status, Assignment Group, SLA Breached, and Root Cause.
+    The context contains the following key fields for each incident: Incident ID, Reporter Name, Contact Type, Category, Item Affected (CI), Item Affected (CI), Short Description, Priority, Status, Assignment Group, SLA Breached, and Root Cause.
 
     If the context does not contain sufficient information to answer the question, you must clearly state that you "cannot answer based on the provided incidents."
 
@@ -169,12 +162,14 @@ def generate_rag_answer(user_query, retrieved_incidents):
     """
 
     try:
+        # Fix: The keyword 'config' was replaced with 'generation_config'
         response = llm.generate_content(
             prompt,
-            config={"temperature": 0.2}
+            generation_config={"temperature": 0.2}
         )
         return response.text
     except Exception as e:
+        # Log the specific error if possible, but return a generic message to the frontend
         logging.error(f"Error calling LLM for RAG answer: {e}")
         return "Failed to generate answer due to an LLM service error."
 
@@ -273,7 +268,8 @@ def rag():
             return jsonify({"error": "Failed to generate query embedding."}), 500
             
         # Retrieve context
-        retrieved_incidents = retrieve_incidents_in_memory(query_embedding_values)
+        # top_k remains 5 as per user request
+        retrieved_incidents = retrieve_incidents_in_memory(query_embedding_values, top_k=5)
         
         # Generate RAG answer
         rag_answer = generate_rag_answer(user_query, retrieved_incidents)
@@ -298,6 +294,7 @@ def rag():
 
 if __name__ == '__main__':
     if initialize_global_resources():
+        # Using 0.0.0.0 and PORT from environment is standard for Cloud Run
         app.run(debug=True, host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
     else:
         logging.error("Application failed to start due to resource initialization error.")
