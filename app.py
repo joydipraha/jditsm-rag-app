@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 # Read values from environment variables.
 PROJECT_ID = os.environ.get("PROJECT_ID")
 REGION = os.environ.get("REGION")
-LLM_MODEL = "gemini-2.5-flash-preview-05-20"
+LLM_MODEL = "gemini-2.5-flash"
 EMBEDDING_MODEL_NAME = "text-embedding-004"
 
 # These must be set as environment variables during deployment.
